@@ -1,0 +1,7 @@
+{
+    "environment_name": "maskrcnn",
+    "docker.enabled": "True",
+    "docker.base_image": "igitman/maskrcnn:py3.7-cuda-10-pytorch-1.2",
+    "docker.shm_size": "16g",
+    "python.user_managed_dependencies": "True" 
+}
