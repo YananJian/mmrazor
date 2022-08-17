@@ -2,9 +2,73 @@
 import torch
 import torch.nn as nn
 from torch.nn.modules.batchnorm import _BatchNorm
+import torch.nn.functional as F
 
 from ..builder import DISTILLERS, MODELS, build_loss
 from .base import BaseDistiller
+import pdb
+
+from torch.autograd import Function
+
+class GradReverse(Function):
+
+    @staticmethod
+    def forward(ctx, x, alpha):
+        ctx.alpha = alpha
+        return x.view_as(x)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        output = grad_output * -ctx.alpha
+        return output, None
+
+def grad_reverse(x,alpha):
+    return GradReverse.apply(x,alpha)
+
+
+class Discriminator(nn.Module):
+    def __init__(self, outputs_size, K = 2):
+        super(Discriminator, self).__init__()
+        self.conv1 = nn.Conv2d(in_channels=outputs_size, out_channels=outputs_size//K, kernel_size=1, stride=1, bias=True)
+        outputs_size = outputs_size // K
+        self.conv2 = nn.Conv2d(in_channels=outputs_size, out_channels=outputs_size//K, kernel_size=1, stride=1, bias=True)
+        outputs_size = outputs_size // K
+        self.conv3 = nn.Conv2d(in_channels=outputs_size, out_channels=2, kernel_size=1, stride=1, bias=True)
+
+    def forward(self, x):
+        #x = x[:,:,None,None]
+        out = F.leaky_relu(self.conv1(x), 0.02)
+        out = F.leaky_relu(self.conv2(out), 0.02)
+        out = F.leaky_relu(self.conv3(out), 0.02)
+        #pdb.set_trace()
+        #out = out.view(out.size(0), -1)
+        return out
+
+
+class Discriminators(nn.Module):
+    def __init__(self, output_dims, grl):
+        super(Discriminators, self).__init__()
+        self.discriminators = [Discriminator(i) for i in output_dims]
+        self.grl = grl
+    
+    def forward(self, x):
+        if self.grl == True:
+            out = [self.discriminators[i](grad_reverse(x[i], 1.0)) for i in range(len(self.discriminators))]
+        else:
+            out = [self.discriminators[i](x[i]) for i in range(len(self.discriminators))]
+
+        return out
+
+
+class DiscriminatorModules(nn.Module):
+    def __init__(self, models):
+        super(DiscriminatorModules, self).__init__()
+        self.models = models
+
+    def forward(self, outputs, targets):
+        inputs = [torch.cat((i,j),0) for i, j in zip(outputs, targets)]
+        outputs = self.models(inputs)
+        return outputs
 
 
 @DISTILLERS.register_module()
@@ -37,6 +101,7 @@ class SingleTeacherDistiller(BaseDistiller):
         self.components = components
         self.losses = nn.ModuleDict()
         self.align_modules = nn.ModuleDict()
+        self.discriminator_modules = nn.ModuleDict()
 
         # Record the featuremaps that need to calculate the distillation loss.
         self.student_outputs = dict()
@@ -50,7 +115,6 @@ class SingleTeacherDistiller(BaseDistiller):
             # the shareable head in Retinanet
             self.student_outputs[student_module_name] = list()
             self.teacher_outputs[teacher_module_name] = list()
-
             # If the number of featuremap channels of student and teacher are
             # inconsistent, they need to be aligned by a 1x1 convolution
             align_module_cfg = getattr(component, 'align_module', None)
@@ -58,7 +122,17 @@ class SingleTeacherDistiller(BaseDistiller):
                 align_module_name = f'component_{i}'
                 align_module = self.build_align_module(align_module_cfg)
                 self.align_modules[align_module_name] = align_module
-
+            
+            discriminator_module_cfg = getattr(component, 'discriminator_module', None)
+            if discriminator_module_cfg is not None:
+                discriminator_modules = self.build_discriminator_modules(discriminator_module_cfg)
+                discriminator_modules = discriminator_modules.to("cuda")
+                for j, d in enumerate(discriminator_modules.models.discriminators):
+                    #self.register_parameter(f'discriminator_{j}', d.parameters())
+                    d = d.to("cuda")
+                discriminator_module_name = f'component_{i}'
+                self.discriminator_modules[discriminator_module_name] = discriminator_modules
+                    
             # Multiple losses can be calculated at the same location
             for loss in component.losses:
                 loss_cfg = loss.copy()
@@ -91,6 +165,16 @@ class SingleTeacherDistiller(BaseDistiller):
             align_module = nn.Linear(in_channels, out_channels)
         return align_module
 
+    def build_discriminator_modules(self, cfg):
+        """Build ``discriminator_modules`` from the `cfg`.
+
+        Args:
+            cfg (dict): The config dict for ``discriminator_module``.
+        """
+        discriminators = Discriminators(output_dims=cfg.in_channels, grl=True)
+        d_modules = DiscriminatorModules(discriminators)
+        return d_modules
+
     def prepare_from_student(self, student):
         """Registers a global forward hook for each teacher module and student
         module to be used in the distillation.
@@ -114,11 +198,13 @@ class SingleTeacherDistiller(BaseDistiller):
             self.teacher_module2name[module] = name
         self.teacher_name2module = dict(self.teacher.named_modules())
 
+
         # Register forward hooks for modules that need to participate in loss
         # calculation.
         for component in self.components:
             student_module_name = component['student_module']
             teacher_module_name = component['teacher_module']
+            discriminator_module_name = component['discriminator_module']
 
             student_module = self.student_name2module[student_module_name]
             teacher_module = self.teacher_name2module[teacher_module_name]
@@ -174,7 +260,6 @@ class SingleTeacherDistiller(BaseDistiller):
         else:
             with torch.no_grad():
                 output = self.teacher(**data)
-
         return output
 
     def exec_student_forward(self, student, data):
@@ -225,10 +310,15 @@ class SingleTeacherDistiller(BaseDistiller):
             teacher_module_name = component['teacher_module']
             teacher_outputs = self.get_teacher_outputs(teacher_module_name)
 
+            discriminator_module_name = f'component_{i}'
+            if discriminator_module_name in self.discriminator_modules:
+                discriminator_module = self.discriminator_modules[discriminator_module_name]
+                discriminator_outputs = discriminator_module(student_outputs, teacher_outputs)
+            
             # One module maybe have N outputs, such as the shareable head in
             # RetinaNet.
-            for out_idx, (s_out, t_out) in enumerate(
-                    zip(student_outputs, teacher_outputs)):
+            for out_idx, (s_out, t_out, d_out) in enumerate(
+                    zip(student_outputs, teacher_outputs, discriminator_outputs)):
 
                 for loss in component.losses:
                     loss_module = self.losses[loss.name]
@@ -237,7 +327,9 @@ class SingleTeacherDistiller(BaseDistiller):
                     # Pass the gt_label to loss function.
                     # Only used by WSLD.
                     loss_module.current_data = data
-                    losses[loss_name] = loss_module(s_out, t_out)
+                    if loss.name == 'loss_discriminator':
+                        losses[loss_name] = loss_module(s_out, t_out, d_out)
+                    else:
+                        losses[loss_name] = loss_module(s_out, t_out)
                     loss_module.current_data = None
-
         return losses

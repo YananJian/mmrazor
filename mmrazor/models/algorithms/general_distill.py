@@ -18,14 +18,22 @@ class GeneralDistill(BaseAlgorithm):
     def __init__(self,
                  with_student_loss=True,
                  with_teacher_loss=False,
+                 with_discriminator_loss=False,
                  **kwargs):
 
         super(GeneralDistill, self).__init__(**kwargs)
         self.with_student_loss = with_student_loss
         self.with_teacher_loss = with_teacher_loss
+        self.with_discriminator_loss = with_discriminator_loss
+        self.optimizer = None
 
     def train_step(self, data, optimizer):
         """"""
+        if self.optimizer is None:
+             for discriminator_module in self.distiller.discriminator_modules.values():
+                 for discriminator in discriminator_module.models.discriminators:
+                     optimizer.add_param_group({'params':discriminator.parameters()})
+             self.optimizer = optimizer
         losses = dict()
         if self.with_teacher_loss:
             teacher_losses = self.distiller.exec_teacher_forward(data)
@@ -53,4 +61,5 @@ class GeneralDistill(BaseAlgorithm):
         loss, log_vars = self._parse_losses(losses)
         outputs = dict(
             loss=loss, log_vars=log_vars, num_samples=len(data['img'].data))
+        #import pdb;pdb.set_trace()
         return outputs

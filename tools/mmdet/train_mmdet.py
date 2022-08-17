@@ -28,8 +28,8 @@ from mmrazor.apis import init_random_seed, set_random_seed, train_mmdet_model
 from mmrazor.models import build_algorithm
 from mmrazor.utils import setup_multi_processes
 
-work_root_dir = os.environ["AML_JOB_OUTPUT_PATH"]
-data_dir = os.environ["AML_JOB_INPUT_PATH"]
+#work_root_dir = os.environ["AML_JOB_OUTPUT_PATH"]
+#data_dir = os.environ["AML_JOB_INPUT_PATH"]
 
 
 def parse_args():
@@ -122,8 +122,8 @@ def main():
         # use config filename as default work_dir if cfg.work_dir is None
         cfg.work_dir = osp.join('./work_dirs',
                                 osp.splitext(osp.basename(args.config))[0])
-        cfg.work_dir = osp.join(work_root_dir,
-                                osp.splitext(osp.basename(args.config))[0])
+        #cfg.work_dir = osp.join(work_root_dir,
+        #                        osp.splitext(osp.basename(args.config))[0])
 
     if args.resume_from is not None:
         cfg.resume_from = args.resume_from
@@ -146,10 +146,10 @@ def main():
 
 
     ## data folder
-    cfg.data_root = data_dir
-    ln_dir = "ln -s {} {}".format(cfg.data_root, './data')
-    os.system(ln_dir)
-    os.system("ls data")
+    #cfg.data_root = data_dir
+    #ln_dir = "ln -s {} {}".format(cfg.data_root, './data')
+    #os.system(ln_dir)
+    #os.system("ls data")
 
 
 

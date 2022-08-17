@@ -127,11 +127,17 @@ algorithm = dict(
             dict(
                 student_module='bbox_head.gfl_cls',
                 teacher_module='bbox_head.gfl_cls',
+                discriminator_module=dict(name='discriminator', in_channels=[80,80,80,80,80]),
                 losses=[
                     dict(
                         type='ChannelWiseDivergence',
                         name='loss_cwd_cls_head',
                         tau=1,
+                        loss_weight=5,
+                    ),
+                    dict(
+                        type='DiscriminatorLoss',
+                        name='loss_discriminator',
                         loss_weight=5,
                     )
                 ])
