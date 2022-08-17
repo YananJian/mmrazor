@@ -1,0 +1,7 @@
+{
+    "environment_name": "xiyinmsu_maskrcnn_py3.7-cuda10.1-pytorch1.4",
+    "docker.enabled": "True",
+    "docker.base_image": "xiyinmsu/maskrcnn:py3.7-cuda10.1-pytorch1.4",
+    "docker.shm_size": "64g",
+    "python.user_managed_dependencies": "True" 
+}
