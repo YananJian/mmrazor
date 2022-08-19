@@ -42,6 +42,11 @@ class SingleTeacherDistiller(BaseDistiller):
         self.student_outputs = dict()
         self.teacher_outputs = dict()
 
+        self.student_grads = dict()
+        self.teacher_grads = dict()
+
+        self.temp_count = 0
+
         for i, component in enumerate(self.components):
             student_module_name = component['student_module']
             teacher_module_name = component['teacher_module']
@@ -50,6 +55,9 @@ class SingleTeacherDistiller(BaseDistiller):
             # the shareable head in Retinanet
             self.student_outputs[student_module_name] = list()
             self.teacher_outputs[teacher_module_name] = list()
+
+            self.student_grads[student_module_name] = list()
+            self.teacher_grads[teacher_module_name] = list()
 
             # If the number of featuremap channels of student and teacher are
             # inconsistent, they need to be aligned by a 1x1 convolution
@@ -152,6 +160,27 @@ class SingleTeacherDistiller(BaseDistiller):
             self.student_outputs[self.student_module2name[module]].append(
                 outputs)
 
+    def teacher_grad_hook(self, outputs, loss_types=['loss_cls', 'loss_bbox']):
+        outputs = [outputs[loss] for loss in loss_types]
+
+        modules = [k for k in self.teacher_outputs.keys()]
+        inputs = [self.teacher_outputs[m][0] for m in self.teacher_outputs]
+        # print(inputs)
+
+        grads = torch.autograd.grad(outputs, inputs, retain_graph=True)
+        for i, grad in enumerate(grads):
+            self.teacher_grads[modules[i]] = grads[i]
+        
+    def student_grad_hook(self, outputs, loss_types=['loss_cls', 'loss_bbox']):
+        outputs = [outputs[loss] for loss in loss_types]
+
+        modules = [k for k in self.student_outputs.keys()]
+        inputs = [self.student_outputs[m][0] for m in modules]
+
+        grads = torch.autograd.grad(outputs, inputs, retain_graph=True)
+        for i, grad in enumerate(grads):
+            self.student_grads[modules[i]] = grads[i]
+
     def reset_outputs(self, outputs):
         """Reset the teacher's outputs or student's outputs."""
         for key in outputs.keys():
@@ -166,15 +195,24 @@ class SingleTeacherDistiller(BaseDistiller):
 
         # Convert the context manager's mode to teacher.
         self.reset_ctx_teacher_mode(True)
-        # Clear the saved data of the last forward。
+        # Clear the saved data of the last forward.
         self.reset_outputs(self.teacher_outputs)
+        self.reset_outputs(self.teacher_grads)
 
         if self.teacher_trainable:
             output = self.teacher(**data)
         else:
-            with torch.no_grad():
-                output = self.teacher(**data)
-
+            # with torch.no_grad():
+            #     output = self.teacher(**data)
+            output = self.teacher(**data)
+            self.teacher_grad_hook(output)
+            # print(data['img'].shape)
+            # m = [k for k in self.teacher_outputs.keys()]
+            # print(output, self.teacher_outputs[m[0]][0].shape)
+            # grad = torch.autograd.grad(output['loss_cls'], self.teacher_outputs[m[0]][0])
+            # print(grad[0].shape)
+            # torch.save({"img": data['img'], "feat":self.teacher_outputs[m[0]][0], "grad": self.teacher_grads[m[0]]}, '/home/frank/Desktop/notebooks/tensors_%d.pt' % self.temp_count)
+            self.temp_count += 1
         return output
 
     def exec_student_forward(self, student, data):
@@ -185,10 +223,18 @@ class SingleTeacherDistiller(BaseDistiller):
         """
         # Convert the context manager's mode to teacher.
         self.reset_ctx_teacher_mode(False)
-        # Clear the saved data of the last forward。
+        # Clear the saved data of the last forward.
         self.reset_outputs(self.student_outputs)
+        self.reset_outputs(self.student_grads)
 
         output = student(**data)
+        self.student_grad_hook(output)
+        # print(data['img'].shape)
+        # m = [k for k in self.student_outputs.keys()]
+        # print(output, self.student_outputs[m[0]][0].shape)
+        # grad = torch.autograd.grad(output['loss_cls'], self.student_outputs[m[0]][0], retain_graph=True)
+        # print(grad[0].shape)
+        # torch.save({"img": data['img'], "feat":self.student_outputs[m[0]][0], "grad": self.student_grads[m[0]]}, '/home/frank/Desktop/notebooks/student_tensors_%d.pt' % self.temp_count)
         return output
 
     def train(self, mode=True):
@@ -225,6 +271,9 @@ class SingleTeacherDistiller(BaseDistiller):
             teacher_module_name = component['teacher_module']
             teacher_outputs = self.get_teacher_outputs(teacher_module_name)
 
+            student_grad = self.student_grads[student_module_name]
+            teacher_grad = self.teacher_grads[teacher_module_name]
+
             # One module maybe have N outputs, such as the shareable head in
             # RetinaNet.
             for out_idx, (s_out, t_out) in enumerate(
@@ -237,7 +286,11 @@ class SingleTeacherDistiller(BaseDistiller):
                     # Pass the gt_label to loss function.
                     # Only used by WSLD.
                     loss_module.current_data = data
-                    losses[loss_name] = loss_module(s_out, t_out)
+                    if loss.type == 'ChannelSpatialAttention':
+                        # TODO: currently not consider retinanet, multi output/grads in one module
+                        losses[loss_name] = loss_module(s_out, t_out, student_grad, teacher_grad)
+                    else:
+                        losses[loss_name] = loss_module(s_out, t_out)
                     loss_module.current_data = None
 
         return losses

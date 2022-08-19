@@ -5,8 +5,8 @@ from .relational_kd import AngleWiseRKD, DistanceWiseRKD
 from .weighted_soft_label_distillation import WSLD
 
 from .mtcwd import MTChannelWiseDivergence
-
+from .iclr import ChannelSpatialAttention
 __all__ = [
     'ChannelWiseDivergence', 'KLDivergence', 'AngleWiseRKD', 'DistanceWiseRKD',
-    'WSLD', 'MTChannelWiseDivergence',
+    'WSLD', 'MTChannelWiseDivergence', 'ChannelSpatialAttention'
 ]

@@ -29,6 +29,7 @@
 
 
 
+AML_JOB_INPUT_PATH=/home/frank/Documents AML_JOB_OUTPUT_PATH=/home/frank/Desktop/mmrazor/fuxun/output python ./tools/mmdet/train_mmdet.py ./configs/distill/iclr/iclr_r101_r50_1x_coco_allfpn_grad.py 
 
 
 
@@ -39,7 +40,7 @@
 
 # AML_JOB_INPUT_PATH=/home/frank/Documents AML_JOB_OUTPUT_PATH=/home/frank/Desktop/mmrazor/fuxun/output python ./tools/mmdet/train_mmdet.py ./configs/distill/cwd/cwd_cls_head_l_s_t_05x_coco_adamw_mt_mask.py
 
-AML_JOB_INPUT_PATH=/home/frank/Documents AML_JOB_OUTPUT_PATH=/home/frank/Desktop/mmrazor/fuxun/output python ./tools/mmdet/train_mmdet.py ./configs/distill/cwd/cwd_cls_head_l_s_t_05x_coco_adamw_mt_dropout.py
+# AML_JOB_INPUT_PATH=/home/frank/Documents AML_JOB_OUTPUT_PATH=/home/frank/Desktop/mmrazor/fuxun/output python ./tools/mmdet/train_mmdet.py ./configs/distill/cwd/cwd_cls_head_l_s_t_05x_coco_adamw_mt_dropout.py
 
 # AML_JOB_INPUT_PATH=/home/frank/Documents AML_JOB_OUTPUT_PATH=/home/frank/Desktop/mmrazor/fuxun/output python ./tools/mmdet/train_mmdet.py ./configs/distill/cwd/cwd_cls_head_l_s_t_05x_coco_adamw_st2.py
 
