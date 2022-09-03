@@ -3,8 +3,9 @@ import torch
 import torch.nn as nn
 from torch.nn.modules.batchnorm import _BatchNorm
 
-from ..builder import DISTILLERS, MODELS, build_loss
+from ..builder import DISTILLERS, MODELS, HEADS, build_loss
 from .base import BaseDistiller
+import copy
 
 
 @DISTILLERS.register_module()
@@ -28,6 +29,7 @@ class SingleTeacherDistiller(BaseDistiller):
                  teacher_trainable=False,
                  teacher_norm_eval=True,
                  components=tuple(),
+                 assist=False,
                  **kwargs):
         super().__init__(**kwargs)
         self.teacher_trainable = teacher_trainable
@@ -42,10 +44,16 @@ class SingleTeacherDistiller(BaseDistiller):
         self.student_outputs = dict()
         self.teacher_outputs = dict()
 
+        self.student_feats = None
+        self.teacher_inputs = None
+
         self.student_grads = dict()
         self.teacher_grads = dict()
 
+        self.teacher_roi_logits = list()
+
         self.temp_count = 0
+        self.ta = None
 
         for i, component in enumerate(self.components):
             student_module_name = component['student_module']
@@ -56,8 +64,8 @@ class SingleTeacherDistiller(BaseDistiller):
             self.student_outputs[student_module_name] = list()
             self.teacher_outputs[teacher_module_name] = list()
 
-            self.student_grads[student_module_name] = list()
-            self.teacher_grads[teacher_module_name] = list()
+            #self.student_grads[student_module_name] = list()
+            #self.teacher_grads[teacher_module_name] = list()
 
             # If the number of featuremap channels of student and teacher are
             # inconsistent, they need to be aligned by a 1x1 convolution
@@ -68,10 +76,22 @@ class SingleTeacherDistiller(BaseDistiller):
                 self.align_modules[align_module_name] = align_module
 
             # Multiple losses can be calculated at the same location
+            '''
             for loss in component.losses:
                 loss_cfg = loss.copy()
                 loss_name = loss_cfg.pop('name')
                 self.losses[loss_name] = build_loss(loss_cfg)
+            '''
+        
+        if assist: 
+            self.ta = self.build_assist()
+            ta_modules = [x for x in self.ta.modules()]
+            for x in ta_modules:
+                x.requires_grad_() 
+            self.ta.init_weights()
+        self.assist = assist
+        self.adjust_device = False
+
 
     def build_teacher(self, cfg):
         """Build a model from the `cfg`."""
@@ -79,6 +99,11 @@ class SingleTeacherDistiller(BaseDistiller):
         teacher = MODELS.build(cfg)
 
         return teacher
+
+    def build_assist(self):
+        #assist_head = HEADS.build(assist)
+        assist_head = copy.deepcopy(self.teacher.bbox_head)
+        return assist_head
 
     def build_align_module(self, cfg):
         """Build ``align_module`` from the `cfg`.
@@ -121,13 +146,12 @@ class SingleTeacherDistiller(BaseDistiller):
         for name, module in self.teacher.named_modules():
             self.teacher_module2name[module] = name
         self.teacher_name2module = dict(self.teacher.named_modules())
-
         # Register forward hooks for modules that need to participate in loss
         # calculation.
+
         for component in self.components:
             student_module_name = component['student_module']
             teacher_module_name = component['teacher_module']
-
             student_module = self.student_name2module[student_module_name]
             teacher_module = self.teacher_name2module[teacher_module_name]
 
@@ -135,6 +159,7 @@ class SingleTeacherDistiller(BaseDistiller):
                 self.student_forward_output_hook)
             teacher_module.register_forward_hook(
                 self.teacher_forward_output_hook)
+        #self.teacher.roi_head.bbox_head.register_forward_hook(self.teacher_roi_output_hook)
 
     def teacher_forward_output_hook(self, module, inputs, outputs):
         """Save the module's forward output.
@@ -147,6 +172,18 @@ class SingleTeacherDistiller(BaseDistiller):
         if self.training:
             self.teacher_outputs[self.teacher_module2name[module]].append(
                 outputs)
+            self.teacher_inputs = inputs
+
+    def teacher_roi_output_hook(self, module, inputs, outputs):
+        """Save the module's forward output.
+
+        Args:
+            module (:obj:`torch.nn.Module`): The module to register hook.
+            inputs (tuple): The input of the module.
+            outputs (tuple): The output of the module.
+        """
+        self.teacher_roi_logits.append(outputs[0])
+
 
     def student_forward_output_hook(self, module, inputs, outputs):
         """Save the module's forward output.
@@ -159,6 +196,11 @@ class SingleTeacherDistiller(BaseDistiller):
         if self.training:
             self.student_outputs[self.student_module2name[module]].append(
                 outputs)
+            # student FPN is 5 layers and starts from ([2, 256, 200, 304])
+            # in order to match teacher Bbox_head inputs, need to use all student FPN layers except for the first FPN.
+            #import pdb;pdb.set_trace()
+            self.student_feats = inputs
+            #ta_outs = self.ta.forward_train(inputs[1:], **self.teacher_inputs[1:])
 
     def teacher_grad_hook(self, outputs, loss_types=['loss_cls', 'loss_bbox']):
         outputs = [outputs[loss] for loss in loss_types]
@@ -166,8 +208,7 @@ class SingleTeacherDistiller(BaseDistiller):
         modules = [k for k in self.teacher_outputs.keys()]
         inputs = [self.teacher_outputs[m][0] for m in self.teacher_outputs]
         # print(inputs)
-
-        grads = torch.autograd.grad(outputs, inputs, retain_graph=True)
+        grads = torch.autograd.grad(outputs, inputs, retain_graph=True, allow_unused=True)
         for i, grad in enumerate(grads):
             self.teacher_grads[modules[i]] = grads[i]
         
@@ -177,7 +218,7 @@ class SingleTeacherDistiller(BaseDistiller):
         modules = [k for k in self.student_outputs.keys()]
         inputs = [self.student_outputs[m][0] for m in modules]
 
-        grads = torch.autograd.grad(outputs, inputs, retain_graph=True)
+        grads = torch.autograd.grad(outputs, inputs, retain_graph=True, allow_unused=True)
         for i, grad in enumerate(grads):
             self.student_grads[modules[i]] = grads[i]
 
@@ -197,22 +238,23 @@ class SingleTeacherDistiller(BaseDistiller):
         self.reset_ctx_teacher_mode(True)
         # Clear the saved data of the last forward.
         self.reset_outputs(self.teacher_outputs)
-        self.reset_outputs(self.teacher_grads)
+        #self.reset_outputs(self.teacher_grads)
+        #self.teacher_roi_logits = list()
 
         if self.teacher_trainable:
             output = self.teacher(**data)
         else:
-            # with torch.no_grad():
-            #     output = self.teacher(**data)
-            output = self.teacher(**data)
-            self.teacher_grad_hook(output)
+            with torch.no_grad():
+                output = self.teacher(**data)
+            #output = self.teacher(**data)
+            #self.teacher_grad_hook(output)
             # print(data['img'].shape)
             # m = [k for k in self.teacher_outputs.keys()]
             # print(output, self.teacher_outputs[m[0]][0].shape)
             # grad = torch.autograd.grad(output['loss_cls'], self.teacher_outputs[m[0]][0])
             # print(grad[0].shape)
             # torch.save({"img": data['img'], "feat":self.teacher_outputs[m[0]][0], "grad": self.teacher_grads[m[0]]}, '/home/frank/Desktop/notebooks/tensors_%d.pt' % self.temp_count)
-            self.temp_count += 1
+            #self.temp_count += 1
         return output
 
     def exec_student_forward(self, student, data):
@@ -225,10 +267,15 @@ class SingleTeacherDistiller(BaseDistiller):
         self.reset_ctx_teacher_mode(False)
         # Clear the saved data of the last forward.
         self.reset_outputs(self.student_outputs)
-        self.reset_outputs(self.student_grads)
+        #self.reset_outputs(self.student_grads)
 
         output = student(**data)
-        self.student_grad_hook(output)
+        if not self.adjust_device:
+            self.ta.to(output['acc'].device)
+            self.adjust_device=True
+        self.ta_losses = self.ta.forward_train(self.student_feats[0][1:], data['img_metas'], data['gt_bboxes'], data['gt_labels']) 
+        #import pdb;pdb.set_trace()
+        #self.student_grad_hook(output)
         # print(data['img'].shape)
         # m = [k for k in self.student_outputs.keys()]
         # print(output, self.student_outputs[m[0]][0].shape)
@@ -271,14 +318,17 @@ class SingleTeacherDistiller(BaseDistiller):
             teacher_module_name = component['teacher_module']
             teacher_outputs = self.get_teacher_outputs(teacher_module_name)
 
-            student_grad = self.student_grads[student_module_name]
-            teacher_grad = self.teacher_grads[teacher_module_name]
+            #student_grad = self.student_grads[student_module_name]
+            #teacher_grad = self.teacher_grads[teacher_module_name]
 
             # One module maybe have N outputs, such as the shareable head in
             # RetinaNet.
+            losses = self.ta_losses
+
+            #import pdb;pdb.set_trace()
+            '''
             for out_idx, (s_out, t_out) in enumerate(
                     zip(student_outputs, teacher_outputs)):
-
                 for loss in component.losses:
                     loss_module = self.losses[loss.name]
                     loss_name = f'{loss.name}.{out_idx}'
@@ -292,5 +342,5 @@ class SingleTeacherDistiller(BaseDistiller):
                     else:
                         losses[loss_name] = loss_module(s_out, t_out)
                     loss_module.current_data = None
-
+            '''
         return losses
