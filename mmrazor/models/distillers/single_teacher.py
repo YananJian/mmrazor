@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 from torch.nn.modules.batchnorm import _BatchNorm
 
-from ..builder import DISTILLERS, MODELS, HEADS, build_loss
+from ..builder import DISTILLERS, MODELS, build_loss
 from .base import BaseDistiller
 import copy
 
