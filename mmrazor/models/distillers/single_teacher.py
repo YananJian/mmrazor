@@ -30,7 +30,8 @@ class SingleTeacherDistiller(BaseDistiller):
                  teacher_norm_eval=True,
                  components=tuple(),
                  assist=False,
-                 assist_loss_mul=None, 
+                 assist_loss_mul=None,
+                 assist_module=dict, 
                  **kwargs):
         super().__init__(**kwargs)
         self.teacher_trainable = teacher_trainable
@@ -38,6 +39,7 @@ class SingleTeacherDistiller(BaseDistiller):
         self.teacher = self.build_teacher(teacher)
 
         self.components = components
+        self.assist_module = assist_module
         self.losses = nn.ModuleDict()
         self.align_modules = nn.ModuleDict()
 
@@ -46,7 +48,6 @@ class SingleTeacherDistiller(BaseDistiller):
         self.teacher_outputs = dict()
 
         self.student_feats = None
-        self.teacher_inputs = None
 
         self.student_grads = dict()
         self.teacher_grads = dict()
@@ -161,6 +162,17 @@ class SingleTeacherDistiller(BaseDistiller):
                 self.student_forward_output_hook)
             teacher_module.register_forward_hook(
                 self.teacher_forward_output_hook)
+
+
+        if self.assist:
+            student_module_name = self.assist_module['student_module']
+            teacher_module_name = self.assist_module['teacher_module']
+            student_module = self.student_name2module[student_module_name]
+            teacher_module = self.teacher_name2module[teacher_module_name]
+
+            student_module.register_forward_hook(
+                self.assist_student_forward_output_hook)
+            
         #self.teacher.roi_head.bbox_head.register_forward_hook(self.teacher_roi_output_hook)
 
     def teacher_forward_output_hook(self, module, inputs, outputs):
@@ -174,7 +186,6 @@ class SingleTeacherDistiller(BaseDistiller):
         if self.training:
             self.teacher_outputs[self.teacher_module2name[module]].append(
                 outputs)
-            self.teacher_inputs = inputs
 
     def teacher_roi_output_hook(self, module, inputs, outputs):
         """Save the module's forward output.
@@ -202,7 +213,20 @@ class SingleTeacherDistiller(BaseDistiller):
             # in order to match teacher Bbox_head inputs, need to use all student FPN layers except for the first FPN.
             #import pdb;pdb.set_trace()
             self.student_feats = inputs
-            #ta_outs = self.ta.forward_train(inputs[1:], **self.teacher_inputs[1:])
+
+    def assist_student_forward_output_hook(self, module, inputs, outputs):
+        """Save the module's forward output.
+
+        Args:
+            module (:obj:`torch.nn.Module`): The module to register hook.
+            inputs (tuple): The input of the module.
+            outputs (tuple): The output of the module.
+        """
+        if self.training:
+            # student FPN is 5 layers and starts from ([2, 256, 200, 304])
+            # in order to match teacher Bbox_head inputs, need to use all student FPN layers except for the first FPN.
+            #import pdb;pdb.set_trace()
+            self.student_feats = inputs
 
     def teacher_grad_hook(self, outputs, loss_types=['loss_cls', 'loss_bbox']):
         outputs = [outputs[loss] for loss in loss_types]
@@ -329,11 +353,6 @@ class SingleTeacherDistiller(BaseDistiller):
 
             # One module maybe have N outputs, such as the shareable head in
             # RetinaNet.
-            if self.assist:
-                losses = self.ta_losses
-                for loss_k, loss_v in losses.items():
-                    loss_v *= self.assist_loss_mul
-            #import pdb;pdb.set_trace()
             '''
             for out_idx, (s_out, t_out) in enumerate(
                     zip(student_outputs, teacher_outputs)):
@@ -351,4 +370,10 @@ class SingleTeacherDistiller(BaseDistiller):
                         losses[loss_name] = loss_module(s_out, t_out)
                     loss_module.current_data = None
             '''
+
+        if self.assist:
+            losses = self.ta_losses
+            for loss_k, loss_v in losses.items():
+                loss_v *= self.assist_loss_mul
+            #import pdb;pdb.set_trace()
         return losses

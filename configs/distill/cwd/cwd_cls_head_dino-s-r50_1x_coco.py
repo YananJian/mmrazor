@@ -238,14 +238,13 @@ algorithm = dict(
             #            loss_weight=5,
             #        )
             #    ])
-            dict(
-                student_module='rpn_head',
-                teacher_module='bbox_head',
-
-            )
         ],
         assist = True,
         assist_loss_mul = 0.01,
+        assist_module=dict(
+            student_module='rpn_head', 
+            teacher_module='bbox_head', # assist head will copy from bbox_head from teacher module
+        ),
      ),
 )
 
