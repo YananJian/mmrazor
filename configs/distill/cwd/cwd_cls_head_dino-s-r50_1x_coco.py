@@ -245,12 +245,14 @@ algorithm = dict(
             )
         ],
         assist = True,
+        assist_loss_mul = 0.01,
      ),
 )
 
 find_unused_parameters = True
 
+optimizer_config = dict(_delete_=True, grad_clip=dict(max_norm=0.1, norm_type=2))
 # optimizer
-optimizer = dict(type='SGD', lr=0.01, momentum=0.9, weight_decay=0.0001)
+optimizer = dict(type='SGD', lr=0.005, momentum=0.9, weight_decay=0.0001)
 
 # log_config = dict(interval=1, hooks=[ dict(type='TextLoggerHook'), dict(type='TensorboardLoggerHook') ])

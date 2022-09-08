@@ -30,6 +30,7 @@ class SingleTeacherDistiller(BaseDistiller):
                  teacher_norm_eval=True,
                  components=tuple(),
                  assist=False,
+                 assist_loss_mul=None, 
                  **kwargs):
         super().__init__(**kwargs)
         self.teacher_trainable = teacher_trainable
@@ -90,6 +91,7 @@ class SingleTeacherDistiller(BaseDistiller):
                 x.requires_grad_() 
             self.ta.init_weights()
         self.assist = assist
+        self.assist_loss_mul = assist_loss_mul
         self.adjust_device = False
 
 
@@ -270,10 +272,14 @@ class SingleTeacherDistiller(BaseDistiller):
         #self.reset_outputs(self.student_grads)
 
         output = student(**data)
+        if not self.assist:
+            return output
+        
         if not self.adjust_device:
             self.ta.to(output['acc'].device)
             self.adjust_device=True
-        self.ta_losses = self.ta.forward_train(self.student_feats[0][1:], data['img_metas'], data['gt_bboxes'], data['gt_labels']) 
+        if self.training:
+            self.ta_losses = self.ta.forward_train(self.student_feats[0][1:], data['img_metas'], data['gt_bboxes'], data['gt_labels']) 
         #import pdb;pdb.set_trace()
         #self.student_grad_hook(output)
         # print(data['img'].shape)
@@ -323,8 +329,10 @@ class SingleTeacherDistiller(BaseDistiller):
 
             # One module maybe have N outputs, such as the shareable head in
             # RetinaNet.
-            losses = self.ta_losses
-
+            if self.assist:
+                losses = self.ta_losses
+                for loss_k, loss_v in losses.items():
+                    loss_v *= self.assist_loss_mul
             #import pdb;pdb.set_trace()
             '''
             for out_idx, (s_out, t_out) in enumerate(
