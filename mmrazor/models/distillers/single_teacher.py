@@ -46,6 +46,7 @@ class SingleTeacherDistiller(BaseDistiller):
         # Record the featuremaps that need to calculate the distillation loss.
         self.student_outputs = dict()
         self.teacher_outputs = dict()
+        self.assist_outputs = dict()
 
         self.student_feats = None
 
@@ -58,12 +59,15 @@ class SingleTeacherDistiller(BaseDistiller):
         self.ta = None
 
         for i, component in enumerate(self.components):
-            student_module_name = component['student_module']
+            if component.get('student_module') is not None:
+                student_module_name = component['student_module']
+                self.student_outputs[student_module_name] = list()
+
+            if component.get('assist_module') is not None:
+                assist_module_name = component['assist_module']
+                self.assist_outputs[assist_module_name] = list()
+
             teacher_module_name = component['teacher_module']
-            # The type of every student_output is a list by default, because
-            # some modules will execute multiple forward calculations, such as
-            # the shareable head in Retinanet
-            self.student_outputs[student_module_name] = list()
             self.teacher_outputs[teacher_module_name] = list()
 
             #self.student_grads[student_module_name] = list()
@@ -78,12 +82,10 @@ class SingleTeacherDistiller(BaseDistiller):
                 self.align_modules[align_module_name] = align_module
 
             # Multiple losses can be calculated at the same location
-            '''
             for loss in component.losses:
                 loss_cfg = loss.copy()
                 loss_name = loss_cfg.pop('name')
                 self.losses[loss_name] = build_loss(loss_cfg)
-            '''
         
         if assist: 
             self.ta = self.build_assist()
@@ -151,18 +153,26 @@ class SingleTeacherDistiller(BaseDistiller):
         self.teacher_name2module = dict(self.teacher.named_modules())
         # Register forward hooks for modules that need to participate in loss
         # calculation.
+        self.assist_module2name = {}
+        for name, module in self.ta.named_modules():
+            self.assist_module2name[module] = name
+        self.assist_name2module = dict(self.ta.named_modules())
 
         for component in self.components:
-            student_module_name = component['student_module']
+            if component.get('student_module') is not None: 
+                student_module_name = component['student_module']
+                student_module = self.student_name2module[student_module_name]
+                student_module.register_forward_hook(self.student_forward_output_hook)
+
+            if component.get('assist_module') is not None: 
+                assist_module_name = component['assist_module']
+                #assist_module = eval('%s.%s'%('self.ta', assist_module_name))
+                assist_module = self.assist_name2module[assist_module_name]
+                assist_module.register_forward_hook(self.assist_forward_output_hook)
+
             teacher_module_name = component['teacher_module']
-            student_module = self.student_name2module[student_module_name]
             teacher_module = self.teacher_name2module[teacher_module_name]
-
-            student_module.register_forward_hook(
-                self.student_forward_output_hook)
-            teacher_module.register_forward_hook(
-                self.teacher_forward_output_hook)
-
+            teacher_module.register_forward_hook(self.teacher_forward_output_hook)
 
         if self.assist:
             student_module_name = self.assist_module['student_module']
@@ -174,6 +184,19 @@ class SingleTeacherDistiller(BaseDistiller):
                 self.assist_student_forward_output_hook)
             
         #self.teacher.roi_head.bbox_head.register_forward_hook(self.teacher_roi_output_hook)
+    def assist_forward_output_hook(self, module, inputs, outputs):
+        """Save the module's forward output.
+
+        Args:
+            module (:obj:`torch.nn.Module`): The module to register hook.
+            inputs (tuple): The input of the module.
+            outputs (tuple): The output of the module.
+        """
+        if self.training:
+            self.assist_outputs[self.assist_module2name[module]].append(
+                outputs)
+            # student FPN is 5 layers and starts from ([2, 256, 200, 304])
+            # in order to match teacher Bbox_head inputs, need to use all student FPN layers except for the first FPN.
 
     def teacher_forward_output_hook(self, module, inputs, outputs):
         """Save the module's forward output.
@@ -212,7 +235,6 @@ class SingleTeacherDistiller(BaseDistiller):
             # student FPN is 5 layers and starts from ([2, 256, 200, 304])
             # in order to match teacher Bbox_head inputs, need to use all student FPN layers except for the first FPN.
             #import pdb;pdb.set_trace()
-            self.student_feats = inputs
 
     def assist_student_forward_output_hook(self, module, inputs, outputs):
         """Save the module's forward output.
@@ -293,6 +315,7 @@ class SingleTeacherDistiller(BaseDistiller):
         self.reset_ctx_teacher_mode(False)
         # Clear the saved data of the last forward.
         self.reset_outputs(self.student_outputs)
+        self.reset_outputs(self.assist_outputs)
         #self.reset_outputs(self.student_grads)
 
         output = student(**data)
@@ -332,48 +355,56 @@ class SingleTeacherDistiller(BaseDistiller):
         losses = dict()
 
         for i, component in enumerate(self.components):
-            # Get the student's outputs.
-            student_module_name = component['student_module']
-            student_outputs = self.student_outputs[student_module_name]
-
-            # Align student output's channels with teacher.
-            align_module_name = f'component_{i}'
-            if align_module_name in self.align_modules:
-                align_module = self.align_modules[align_module_name]
-                student_outputs = [
-                    align_module(s_out) for s_out in student_outputs
-                ]
-
             # Get the teacher's outputs.
             teacher_module_name = component['teacher_module']
             teacher_outputs = self.get_teacher_outputs(teacher_module_name)
+            # Get the student's outputs.
+            if component.get('student_module') is not None:
+                student_module_name = component['student_module']
+                student_outputs = self.student_outputs[student_module_name]
+
+                # Align student output's channels with teacher.
+                align_module_name = f'component_{i}'
+                if align_module_name in self.align_modules:
+                    align_module = self.align_modules[align_module_name]
+                    student_outputs = [
+                        align_module(s_out) for s_out in student_outputs
+                    ]
+ 
+                for out_idx, (s_out, t_out) in enumerate(zip(student_outputs, teacher_outputs)):
+                    for loss in component.losses:
+                        loss_module = self.losses[loss.name]
+                        loss_name = f'{loss.name}.{out_idx}'
+                        # TODO ugly implementation.
+                        # Pass the gt_label to loss function.
+                        # Only used by WSLD.
+                        loss_module.current_data = data
+                        if loss.type == 'ChannelSpatialAttention':
+                            # TODO: currently not consider retinanet, multi output/grads in one module
+                            losses[loss_name] = loss_module(s_out, t_out, student_grad, teacher_grad)
+                        else:
+                            losses[loss_name] = loss_module(s_out, t_out)
+                        loss_module.current_data = None
+
+            if component.get('assist_module') is not None:
+                assist_module_name = component['assist_module']
+                assist_outputs = self.assist_outputs[assist_module_name]
+                for out_idx, (a_out, t_out) in enumerate(zip(assist_outputs, teacher_outputs)):
+                    for loss in component.losses:
+                        loss_module = self.losses[loss.name]
+                        loss_name = f'{loss.name}.{out_idx}'
+                        # TODO ugly implementation.
+                        # Pass the gt_label to loss function.
+                        # Only used by WSLD.
+                        loss_module.current_data = data
+                        losses[loss_name] = loss_module(a_out, t_out)
+                        loss_module.current_data = None
 
             #student_grad = self.student_grads[student_module_name]
             #teacher_grad = self.teacher_grads[teacher_module_name]
-
-            # One module maybe have N outputs, such as the shareable head in
-            # RetinaNet.
-            '''
-            for out_idx, (s_out, t_out) in enumerate(
-                    zip(student_outputs, teacher_outputs)):
-                for loss in component.losses:
-                    loss_module = self.losses[loss.name]
-                    loss_name = f'{loss.name}.{out_idx}'
-                    # TODO ugly implementation.
-                    # Pass the gt_label to loss function.
-                    # Only used by WSLD.
-                    loss_module.current_data = data
-                    if loss.type == 'ChannelSpatialAttention':
-                        # TODO: currently not consider retinanet, multi output/grads in one module
-                        losses[loss_name] = loss_module(s_out, t_out, student_grad, teacher_grad)
-                    else:
-                        losses[loss_name] = loss_module(s_out, t_out)
-                    loss_module.current_data = None
-            '''
-
         if self.assist:
-            losses = self.ta_losses
-            for loss_k, loss_v in losses.items():
+            for loss_k, loss_v in self.ta_losses.items():
                 loss_v *= self.assist_loss_mul
+                losses[loss_k] = loss_v
             #import pdb;pdb.set_trace()
         return losses

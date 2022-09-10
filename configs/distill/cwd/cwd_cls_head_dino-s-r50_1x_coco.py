@@ -227,22 +227,85 @@ algorithm = dict(
         teacher=teacher,
         teacher_trainable=False,
         components=[
-            #dict(
-            #    student_module='neck.fpn_convs.3.conv',
-            #    teacher_module='neck.convs.2.conv',
-            #    losses=[
-            #        dict(
-            #            type='ChannelWiseDivergence',
-            #            name='loss_cwd_cls_head',
-            #            tau=1,
-            #            loss_weight=5,
-            #        )
-            #    ])
+            dict(
+                assist_module='transformer.encoder.layers.0.attentions.0.attention_weights',
+                teacher_module='bbox_head.transformer.encoder.layers.0.attentions.0.attention_weights',
+                losses=[
+                    dict(
+                        type='KLDivergence',
+                        name='loss_encoder_0_attention_weights',
+                        tau=1,
+                        reduction='sum',
+                        loss_weight=1,
+                    )
+                ]),
+
+            dict(
+                assist_module='transformer.encoder.layers.1.attentions.0.attention_weights',
+                teacher_module='bbox_head.transformer.encoder.layers.1.attentions.0.attention_weights',
+                losses=[
+                    dict(
+                        type='KLDivergence',
+                        name='loss_encoder_1_attention_weights',
+                        tau=1,
+                        reduction='sum',
+                        loss_weight=1,
+                    )
+                ]),
+
+            dict(
+                assist_module='transformer.encoder.layers.2.attentions.0.attention_weights',
+                teacher_module='bbox_head.transformer.encoder.layers.2.attentions.0.attention_weights',
+                losses=[
+                    dict(
+                        type='KLDivergence',
+                        name='loss_encoder_2_attention_weights',
+                        tau=1,
+                        reduction='sum',
+                        loss_weight=1,
+                    )
+                ]),
+            dict(
+                assist_module='transformer.encoder.layers.3.attentions.0.attention_weights',
+                teacher_module='bbox_head.transformer.encoder.layers.3.attentions.0.attention_weights',
+                losses=[
+                    dict(
+                        type='KLDivergence',
+                        name='loss_encoder_3_attention_weights',
+                        tau=1,
+                        reduction='sum',
+                        loss_weight=1,
+                    )
+                ]),
+            dict(
+                assist_module='transformer.encoder.layers.4.attentions.0.attention_weights',
+                teacher_module='bbox_head.transformer.encoder.layers.4.attentions.0.attention_weights',
+                losses=[
+                    dict(
+                        type='KLDivergence',
+                        name='loss_encoder_4_attention_weights',
+                        tau=1,
+                        reduction='sum',
+                        loss_weight=1,
+                    )
+                ]),
+            dict(
+                assist_module='transformer.encoder.layers.5.attentions.0.attention_weights',
+                teacher_module='bbox_head.transformer.encoder.layers.5.attentions.0.attention_weights',
+                losses=[
+                    dict(
+                        type='KLDivergence',
+                        name='loss_encoder_5_attention_weights',
+                        tau=1,
+                        reduction='sum',
+                        loss_weight=1,
+                    )
+                ]),
         ],
         assist = True,
-        assist_loss_mul = 0.01,
+        assist_loss_mul = 0.1,
         assist_module=dict(
-            student_module='rpn_head', 
+            student_module='rpn_head',  # assist head will take inputs as student rpn_head inputs, which is student fpn outputs
             teacher_module='bbox_head', # assist head will copy from bbox_head from teacher module
         ),
      ),
@@ -250,7 +313,7 @@ algorithm = dict(
 
 find_unused_parameters = True
 
-optimizer_config = dict(_delete_=True, grad_clip=dict(max_norm=0.1, norm_type=2))
+optimizer_config = dict(_delete_=True, grad_clip=dict(max_norm=2.5, norm_type=2))
 # optimizer
 optimizer = dict(type='SGD', lr=0.005, momentum=0.9, weight_decay=0.0001)
 
