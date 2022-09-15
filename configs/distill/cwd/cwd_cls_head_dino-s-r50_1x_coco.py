@@ -227,6 +227,7 @@ algorithm = dict(
         teacher=teacher,
         teacher_trainable=False,
         components=[
+            
             dict(
                 assist_module='transformer.encoder.layers.0.attentions.0.attention_weights',
                 teacher_module='bbox_head.transformer.encoder.layers.0.attentions.0.attention_weights',
@@ -235,7 +236,7 @@ algorithm = dict(
                         type='KLDivergence',
                         name='loss_encoder_0_attention_weights',
                         tau=1,
-                        reduction='sum',
+                        reduction='mean',
                         loss_weight=1,
                     )
                 ]),
@@ -248,7 +249,7 @@ algorithm = dict(
                         type='KLDivergence',
                         name='loss_encoder_1_attention_weights',
                         tau=1,
-                        reduction='sum',
+                        reduction='mean',
                         loss_weight=1,
                     )
                 ]),
@@ -261,7 +262,7 @@ algorithm = dict(
                         type='KLDivergence',
                         name='loss_encoder_2_attention_weights',
                         tau=1,
-                        reduction='sum',
+                        reduction='mean',
                         loss_weight=1,
                     )
                 ]),
@@ -273,7 +274,7 @@ algorithm = dict(
                         type='KLDivergence',
                         name='loss_encoder_3_attention_weights',
                         tau=1,
-                        reduction='sum',
+                        reduction='mean',
                         loss_weight=1,
                     )
                 ]),
@@ -285,7 +286,7 @@ algorithm = dict(
                         type='KLDivergence',
                         name='loss_encoder_4_attention_weights',
                         tau=1,
-                        reduction='sum',
+                        reduction='mean',
                         loss_weight=1,
                     )
                 ]),
@@ -297,10 +298,11 @@ algorithm = dict(
                         type='KLDivergence',
                         name='loss_encoder_5_attention_weights',
                         tau=1,
-                        reduction='sum',
+                        reduction='mean',
                         loss_weight=1,
                     )
                 ]),
+            
         ],
         assist = True,
         assist_loss_mul = 0.1,

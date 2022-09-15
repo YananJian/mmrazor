@@ -1,5 +1,6 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 from mmcv.runner import build_optimizer
+import torch
 
 
 def build_optimizers(model, cfgs):
@@ -46,3 +47,12 @@ def build_optimizers(model, cfgs):
         return optimizers
 
     return build_optimizer(model, cfgs)
+    '''
+    optimizer_cfg = cfgs
+    base_lr = optimizer_cfg['lr']
+    base_wd = optimizer_cfg.get('weight_decay', None)
+    params = [{'params': model.module.architecture.parameters(), 'lr': base_lr, 'weight_decay': base_wd}, 
+          {'params': model.module.distiller.ta.parameters(), 'lr': base_lr*0.01, 'weight_decay': base_wd}]
+    optimizer_cls = getattr(torch.optim, optimizer_cfg.pop('type'))
+    return optimizer_cls(params, **optimizer_cfg)
+    '''

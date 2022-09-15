@@ -106,7 +106,6 @@ class SingleTeacherDistiller(BaseDistiller):
         return teacher
 
     def build_assist(self):
-        #assist_head = HEADS.build(assist)
         assist_head = copy.deepcopy(self.teacher.bbox_head)
         return assist_head
 
@@ -182,8 +181,8 @@ class SingleTeacherDistiller(BaseDistiller):
 
             student_module.register_forward_hook(
                 self.assist_student_forward_output_hook)
-            
         #self.teacher.roi_head.bbox_head.register_forward_hook(self.teacher_roi_output_hook)
+
     def assist_forward_output_hook(self, module, inputs, outputs):
         """Save the module's forward output.
 
@@ -325,8 +324,10 @@ class SingleTeacherDistiller(BaseDistiller):
         if not self.adjust_device:
             self.ta.to(output['acc'].device)
             self.adjust_device=True
+            #self.ta.load_state_dict(self.teacher.bbox_head.state_dict()) 
         if self.training:
             self.ta_losses = self.ta.forward_train(self.student_feats[0][1:], data['img_metas'], data['gt_bboxes'], data['gt_labels']) 
+
         #import pdb;pdb.set_trace()
         #self.student_grad_hook(output)
         # print(data['img'].shape)

@@ -11,6 +11,7 @@ import os
 import os.path as osp
 import time
 import warnings
+import copy
 
 import mmcv
 import torch
@@ -110,6 +111,15 @@ def parse_args():
     return args
 
 
+def edit_checkpoint(checkpoint):
+
+    new_checkpoint = copy.deepcopy(checkpoint)
+    for k,v in checkpoint['state_dict'].items():
+        if k.startswith('distiller.ta'):
+            new_key = k.replace('distiller.ta', 'architecture.model.bbox_head')
+            new_checkpoint['state_dict'][new_key] = v
+    torch.save(new_checkpoint, 'grad_norm_0.1_edited_epoch_8.pth')
+
 def main():
     args = parse_args()
 
@@ -206,8 +216,13 @@ def main():
     fp16_cfg = cfg.get('fp16', None)
     if fp16_cfg is not None:
         wrap_fp16_model(model)
+
     checkpoint = load_checkpoint(
         algorithm, args.checkpoint, map_location='cpu')
+
+    #edit_checkpoint(checkpoint)
+    #import pdb;pdb.set_trace()
+
     if args.fuse_conv_bn:
         model = fuse_conv_bn(model)
     # old versions did not save class info in checkpoints, this walkaround is
