@@ -6,7 +6,8 @@ from .weighted_soft_label_distillation import WSLD
 
 from .mtcwd import MTChannelWiseDivergence
 from .iclr import ChannelSpatialAttention
+from .sml1loss import SmoothL1Loss
 __all__ = [
     'ChannelWiseDivergence', 'KLDivergence', 'AngleWiseRKD', 'DistanceWiseRKD',
-    'WSLD', 'MTChannelWiseDivergence', 'ChannelSpatialAttention'
+    'WSLD', 'MTChannelWiseDivergence', 'ChannelSpatialAttention', 'SmoothL1Loss'
 ]
